@@ -54,7 +54,7 @@ h1 {
 #searchInput {
     flex: 1;
     padding: 10px;
-    border: 1px solid #ccc;
+    border: 1px solid #333;
     border-radius: 5px;
     font-size: 1rem;
     transition: border-color 0.3s;
