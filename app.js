@@ -26,6 +26,18 @@ function displayNotes(notesToDisplay) {
 function saveOrUpdateNote() {
     const noteText = newNote.value;
     if (noteText.trim() === '') return;
+    // Prevent duplicates on add or update
+    if (editingNoteIndex !== null) {
+        if (isDuplicateNote(noteText, editingNoteIndex)) {
+            alert('A note with the same content already exists.');
+            return;
+        }
+    } else {
+        if (isDuplicateNote(noteText)) {
+            alert('A note with the same content already exists.');
+            return;
+        }
+    }
     if (editingNoteIndex !== null) {
         updateNoteInLocalStorage(noteText, editingNoteIndex);
     } else {
@@ -119,6 +131,20 @@ function getNoteIndex(text) {
 function resetInput() {
     newNote.value = '';
     addNoteBtn.textContent = 'Add Note';
+}
+
+// Duplicate handling
+function normalizeText(text) {
+    return (text || '').trim().toLowerCase();
+}
+
+function isDuplicateNote(candidateText, ignoreIndex = null) {
+    const notes = JSON.parse(localStorage.getItem('notes')) || [];
+    const normalizedCandidate = normalizeText(candidateText);
+    return notes.some((existingText, idx) => {
+        if (ignoreIndex !== null && idx === ignoreIndex) return false;
+        return normalizeText(existingText) === normalizedCandidate;
+    });
 }
 
 // Search functionality
