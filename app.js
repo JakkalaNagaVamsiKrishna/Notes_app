@@ -4,21 +4,23 @@ const notesContainer = document.getElementById('notesContainer');
 const themeToggle = document.getElementById('themeToggle');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
-let editingNoteIndex = null;
-let allNotes = []; // Store all notes for filtering
+const sortSelect = document.getElementById('sortSelect');
+const noteError = document.getElementById('noteError');
+let editingNoteId = null;
+let allNotes = []; // Array of note objects: { id, text, createdAt, updatedAt, pinned }
+let sortMode = 'pinned_newest';
 
 window.addEventListener('load', () => {
-    const savedNotes = JSON.parse(localStorage.getItem('notes')) || [];
-    allNotes = savedNotes;
-    displayNotes(allNotes);
+    migrateIfNeeded();
+    allNotes = loadNotes();
+    renderNotes();
 });
 
 // Function to display notes (used for initial load and filtering)
 function displayNotes(notesToDisplay) {
     notesContainer.innerHTML = '';
-    notesToDisplay.forEach((note, index) => {
-        const originalIndex = allNotes.indexOf(note);
-        createNoteElement(note, originalIndex !== -1 ? originalIndex : index);
+    notesToDisplay.forEach((note) => {
+        createNoteElement(note);
     });
 }
 
@@ -26,28 +28,23 @@ function displayNotes(notesToDisplay) {
 function saveOrUpdateNote() {
     const noteText = newNote.value;
     if (noteText.trim() === '') return;
-    // Prevent duplicates on add or update
-    if (editingNoteIndex !== null) {
-        if (isDuplicateNote(noteText, editingNoteIndex)) {
-            alert('A note with the same content already exists.');
+    // Prevent duplicates on add or update (compare by text, ignore same id on edit)
+    if (editingNoteId !== null) {
+        if (isDuplicateNote(noteText, editingNoteId)) {
+            setNoteError('A note with the same content already exists.');
             return;
         }
+        updateNoteInLocalStorage(noteText, editingNoteId);
     } else {
         if (isDuplicateNote(noteText)) {
-            alert('A note with the same content already exists.');
+            setNoteError('A note with the same content already exists.');
             return;
         }
-    }
-    if (editingNoteIndex !== null) {
-        updateNoteInLocalStorage(noteText, editingNoteIndex);
-    } else {
         saveNoteToLocalStorage(noteText);
-        const notes = JSON.parse(localStorage.getItem('notes')) || [];
-        allNotes = notes;
-        const noteIndex = notes.length - 1; // Get the index of the newly added note
-        // Apply current search filter if any
-        filterNotes();
+        allNotes = loadNotes();
+        renderNotes();
         newNote.value = '';
+        clearNoteError();
     }
 }
 
@@ -55,82 +52,121 @@ addNoteBtn.addEventListener('click', saveOrUpdateNote);
 
 // Add Enter key functionality to save/update notes
 newNote.addEventListener('keydown', (e) => {
-    // If Enter is pressed without Shift, save/update the note
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault(); // Prevent default new line behavior
+    // Ctrl+Enter saves/updates, Enter alone inserts newline
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
         saveOrUpdateNote();
     }
-    // Shift+Enter will allow new lines in the textarea (default behavior)
 });
 
-function createNoteElement(text, index = null) {
+// Validate on input (debounced)
+newNote.addEventListener('input', () => {
+    validateNoteLive();
+});
+
+function createNoteElement(note) {
     const noteDiv = document.createElement('div');
     noteDiv.classList.add('note');
 
-    const noteText = document.createElement('pre');
-    noteText.textContent = text;
+    const leftWrap = document.createElement('div');
+    leftWrap.classList.add('note-left');
 
-    // If index is null, get it from localStorage
-    const noteIndex = index !== null ? index : getNoteIndex(text);
+    if (note.pinned) {
+        const badge = document.createElement('span');
+        badge.classList.add('pin-badge');
+        badge.textContent = '📌';
+        leftWrap.appendChild(badge);
+    }
+
+    const noteText = document.createElement('pre');
+    noteText.textContent = note.text;
+    leftWrap.appendChild(noteText);
 
     const editBtn = document.createElement('button');
     editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', () => editNote(text, noteIndex));
+    editBtn.addEventListener('click', () => editNote(note));
 
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = 'Delete';
     deleteBtn.addEventListener('click', () => {
         noteDiv.remove();
-        deleteNoteFromLocalStorage(text);
+        deleteNoteFromLocalStorage(note.id);
     });
 
-    noteDiv.appendChild(noteText);
+    const pinBtn = document.createElement('button');
+    pinBtn.textContent = note.pinned ? 'Unpin' : 'Pin';
+    pinBtn.addEventListener('click', () => {
+        togglePin(note.id);
+    });
+
+    noteDiv.appendChild(leftWrap);
     noteDiv.appendChild(editBtn);
     noteDiv.appendChild(deleteBtn);
+    noteDiv.appendChild(pinBtn);
     notesContainer.appendChild(noteDiv);
 }
 
-function saveNoteToLocalStorage(note) {
-    const notes = JSON.parse(localStorage.getItem('notes')) || [];
-    notes.push(note);
-    localStorage.setItem('notes', JSON.stringify(notes));
+function saveNoteToLocalStorage(text) {
+    const notes = loadNotes();
+    const now = Date.now();
+    const newNoteObj = {
+        id: generateId(),
+        text: text,
+        createdAt: now,
+        updatedAt: now,
+        pinned: false
+    };
+    notes.push(newNoteObj);
+    saveNotes(notes);
 }
 
-function updateNoteInLocalStorage(newText, index) {
-    const notes = JSON.parse(localStorage.getItem('notes'));
-    notes[index] = newText;
-    localStorage.setItem('notes', JSON.stringify(notes));
-    allNotes = notes;
-
-    // Apply current search filter if any
-    filterNotes();
-    editingNoteIndex = null;
+function updateNoteInLocalStorage(newText, id) {
+    const notes = loadNotes();
+    const idx = notes.findIndex(n => n.id === id);
+    if (idx !== -1) {
+        notes[idx] = {
+            ...notes[idx],
+            text: newText,
+            updatedAt: Date.now()
+        };
+        saveNotes(notes);
+        allNotes = notes;
+        renderNotes();
+    }
+    editingNoteId = null;
     resetInput();
 }
 
-function deleteNoteFromLocalStorage(note) {
-    const notes = JSON.parse(localStorage.getItem('notes')) || [];
-    const updatedNotes = notes.filter(n => n !== note);
-    localStorage.setItem('notes', JSON.stringify(updatedNotes));
+function deleteNoteFromLocalStorage(id) {
+    const notes = loadNotes();
+    const updatedNotes = notes.filter(n => n.id !== id);
+    saveNotes(updatedNotes);
     allNotes = updatedNotes;
-    // Apply current search filter if any
-    filterNotes();
+    renderNotes();
 }
 
-function editNote(text, index) {
-    newNote.value = text;
-    editingNoteIndex = index;
+function editNote(note) {
+    newNote.value = note.text;
+    editingNoteId = note.id;
     addNoteBtn.textContent = 'Update Note';
 }
 
-function getNoteIndex(text) {
-    const notes = JSON.parse(localStorage.getItem('notes')) || [];
-    return notes.indexOf(text);
+// ID generation
+function generateId() {
+    if (window.crypto && window.crypto.randomUUID) {
+        return window.crypto.randomUUID();
+    }
+    // Fallback simple UUID v4-ish
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
 }
 
 function resetInput() {
     newNote.value = '';
     addNoteBtn.textContent = 'Add Note';
+    clearNoteError();
 }
 
 // Duplicate handling
@@ -138,35 +174,138 @@ function normalizeText(text) {
     return (text || '').trim().toLowerCase();
 }
 
-function isDuplicateNote(candidateText, ignoreIndex = null) {
-    const notes = JSON.parse(localStorage.getItem('notes')) || [];
+function isDuplicateNote(candidateText, ignoreId = null) {
+    const notes = loadNotes();
     const normalizedCandidate = normalizeText(candidateText);
-    return notes.some((existingText, idx) => {
-        if (ignoreIndex !== null && idx === ignoreIndex) return false;
-        return normalizeText(existingText) === normalizedCandidate;
+    return notes.some((n) => {
+        if (ignoreId !== null && n.id === ignoreId) return false;
+        return normalizeText(n.text) === normalizedCandidate;
     });
 }
 
-// Search functionality
-function filterNotes() {
-    const searchTerm = searchInput.value.toLowerCase().trim();
-    if (searchTerm === '') {
-        displayNotes(allNotes);
+// Inline error helpers
+function setNoteError(message) {
+    if (noteError) noteError.textContent = message || '';
+    newNote.classList.add('input-error');
+    addNoteBtn.disabled = true;
+}
+
+function clearNoteError() {
+    if (noteError) noteError.textContent = '';
+    newNote.classList.remove('input-error');
+    addNoteBtn.disabled = false;
+}
+
+// Debounce helper
+function debounce(fn, delay) {
+    let timer;
+    return function(...args) {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), delay);
+    };
+}
+
+// Live validation as user types
+const validateNoteLive = debounce(() => {
+    const value = newNote.value;
+    const isEmpty = value.trim() === '';
+    if (isEmpty) {
+        clearNoteError();
+        addNoteBtn.disabled = true; // prevent adding empty
+        return;
+    }
+    const duplicate = editingNoteId !== null
+        ? isDuplicateNote(value, editingNoteId)
+        : isDuplicateNote(value);
+    if (duplicate) {
+        setNoteError('Duplicate note detected.');
     } else {
-        const filteredNotes = allNotes.filter(note => 
-            note.toLowerCase().includes(searchTerm)
-        );
-        displayNotes(filteredNotes);
+        clearNoteError();
+    }
+}, 250);
+
+// Storage helpers and migration
+function loadNotes() {
+    return JSON.parse(localStorage.getItem('notes')) || [];
+}
+
+function saveNotes(notes) {
+    localStorage.setItem('notes', JSON.stringify(notes));
+}
+
+function migrateIfNeeded() {
+    const notes = JSON.parse(localStorage.getItem('notes')) || [];
+    if (notes.length === 0) return;
+    // If first element is a string, migrate entire array to object schema
+    if (typeof notes[0] === 'string') {
+        const now = Date.now();
+        const migrated = notes.map(text => ({
+            id: generateId(),
+            text: text,
+            createdAt: now,
+            updatedAt: now,
+            pinned: false
+        }));
+        saveNotes(migrated);
     }
 }
 
-searchInput.addEventListener('input', filterNotes);
-searchBtn.addEventListener('click', filterNotes);
+function togglePin(id) {
+    const notes = loadNotes();
+    const idx = notes.findIndex(n => n.id === id);
+    if (idx !== -1) {
+        notes[idx] = { ...notes[idx], pinned: !notes[idx].pinned, updatedAt: Date.now() };
+        saveNotes(notes);
+        allNotes = notes;
+        renderNotes();
+    }
+}
+
+// Search + sort + render pipeline
+function renderNotes() {
+    const searchTerm = searchInput.value.toLowerCase().trim();
+    let working = allNotes.slice();
+    if (searchTerm !== '') {
+        working = working.filter(n => (n.text || '').toLowerCase().includes(searchTerm));
+    }
+    const sorted = sortNotes(working, sortMode);
+    displayNotes(sorted);
+}
+
+function sortNotes(notes, mode) {
+    const byUpdatedDesc = (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0);
+    const byUpdatedAsc = (a, b) => (a.updatedAt || 0) - (b.updatedAt || 0);
+    const byTextAsc = (a, b) => normalizeText(a.text).localeCompare(normalizeText(b.text));
+    const byTextDesc = (a, b) => normalizeText(b.text).localeCompare(normalizeText(a.text));
+
+    if (mode === 'pinned_newest') {
+        const pinned = notes.filter(n => n.pinned);
+        const unpinned = notes.filter(n => !n.pinned);
+        pinned.sort(byUpdatedDesc);
+        unpinned.sort(byUpdatedDesc);
+        return [...pinned, ...unpinned];
+    }
+    const copy = notes.slice();
+    if (mode === 'newest') return copy.sort(byUpdatedDesc);
+    if (mode === 'oldest') return copy.sort(byUpdatedAsc);
+    if (mode === 'az') return copy.sort(byTextAsc);
+    if (mode === 'za') return copy.sort(byTextDesc);
+    return copy;
+}
+
+searchInput.addEventListener('input', renderNotes);
+searchBtn.addEventListener('click', renderNotes);
+if (sortSelect) {
+    sortSelect.addEventListener('change', () => {
+        sortMode = sortSelect.value;
+        renderNotes();
+    });
+}
 
 // Also trigger search on Enter key in search input
 searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-        filterNotes();
+        renderNotes();
     }
 });
 

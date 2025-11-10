@@ -20,12 +20,20 @@
             <div class="search-wrapper">
                 <input type="text" id="searchInput" placeholder="Search notes...">
                 <button id="searchBtn" type="button">Search</button>
+                <select id="sortSelect" aria-label="Sort notes">
+                    <option value="pinned_newest" selected>Pinned first + Newest</option>
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="az">A–Z</option>
+                    <option value="za">Z–A</option>
+                </select>
             </div>
         </div>
 
         <div class="note-input">
             <textarea id="newNote" placeholder="type your note here...."></textarea>
             <button id="addNoteBtn">Add note</button>
+            <div id="noteError" class="error-text" role="alert" aria-live="polite"></div>
         </div>
 
 
